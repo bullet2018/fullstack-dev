@@ -1,0 +1,75 @@
+❯ python main.py
+
+=== Brushing Teeth ===
+ 1. Turn on water and wet the brush
+ 2. Put a pea of toothpaste on the brush
+ 3. Brush outer surfaces in circular motions (30–45 sec)
+ 4. Brush inner surfaces (30–45 sec)
+ 5. Brush chewing surfaces (30 sec)
+ 6. Gently brush the tongue (10–15 sec)
+ 7. Spit and rinse the mouth
+ 8. Rinse the brush and let it dry
+
+=== Doing Laundry ===
+ 1. Sort clothes by color and fabric
+ 2. Check pockets and zippers, turn delicates inside out
+ 3. Load the drum up to about 2/3 full
+ 4. Add detergent and softener if needed
+ 5. Choose program and temperature
+ 6. Press start and wait until finished
+ 7. Take out clothes and hang/lay to dry
+
+=== Making Coffee ===
+ 1. Boil water and let it cool to ~92–96C
+ 2. Grind beans medium (or prepare ground coffee)
+ 3. Preheat equipment (dripper/press/cup) with hot water
+ 4. Bloom coffee with a little water (30–40 sec)
+ 5. Pour remaining water to target volume
+ 6. Wait for extraction and serve
+ 7. Optionally add milk/sugar
+ 8. Enjoy
+
+=== Cooking Omelet ===
+ 1. Crack 2–3 eggs into a bowl
+ 2. Add a pinch of salt and pepper; optionally milk/cream
+ 3. Whisk until smooth
+ 4. Heat pan and melt some butter/oil
+ 5. Pour the mixture; cook on medium heat
+ 6. Lift edges with a spatula to distribute mixture
+ 7. Add filling (cheese/herbs/veggies) if desired
+ 8. Fold in half and serve
+
+=== Preparing Backpack ===
+ 1. Check weather and route
+ 2. Pack documents/wallet/keys/phone
+ 3. Add water and a small snack
+ 4. Take charger/power bank if needed
+ 5. Add first-aid items if relevant
+ 6. Check carry comfort and weight
+ 7. Close zippers and secure pockets
+
+=== Start Day (nested functions) ===
+ 1. Wake up and do a quick stretch (1–2 min)
+ 2. Turn on water and wet the brush
+ 3. Put a pea of toothpaste on the brush
+ 4. Brush outer surfaces in circular motions (30–45 sec)
+ 5. Brush inner surfaces (30–45 sec)
+ 6. Brush chewing surfaces (30 sec)
+ 7. Gently brush the tongue (10–15 sec)
+ 8. Spit and rinse the mouth
+ 9. Rinse the brush and let it dry
+10. Boil water and let it cool to ~92–96C
+11. Grind beans medium (or prepare ground coffee)
+12. Preheat equipment (dripper/press/cup) with hot water
+13. Bloom coffee with a little water (30–40 sec)
+14. Pour remaining water to target volume
+15. Wait for extraction and serve
+16. Optionally add milk/sugar
+17. Enjoy
+18. Check weather and route
+19. Pack documents/wallet/keys/phone
+20. Add water and a small snack
+21. Take charger/power bank if needed
+22. Add first-aid items if relevant
+23. Check carry comfort and weight
+24. Close zippers and secure pockets
