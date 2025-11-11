@@ -15,6 +15,7 @@
 
 ## Установка и запуск
 
-### Вариант A: Poetry
 ```bash
+uv sync
+uv add fastapi uvicorn
 uv run uvicorn main:app --reload
