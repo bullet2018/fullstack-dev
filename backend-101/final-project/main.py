@@ -1,9 +1,37 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from typing import List, Dict, Optional
 import bcrypt
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr, field_validator
-from jose import jwt
+from jose import jwt, JWTError
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+# Конфигурация для JWT
+secret_key = os.getenv("SECRET_KEY")
+algorithm = os.getenv("ALGORITHM")
+access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
+
+def create_access_token(data: dict):
+    # Добавляем дату истечения токена
+    to_encode = data.copy()
+    expire = datetime.now() + timedelta(minutes=access_token_expire_minutes)
+    to_encode.update({"exp": expire})  # Поле "exp" указывает, когда токен истечет
+
+    # Генерируем токен
+    return jwt.encode(to_encode, secret_key, algorithm=algorithm)
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+def verify_access_token(token: str):
+    try:
+        payload = jwt.decode(token, secret_key, algorithms=[algorithm])
+        return payload  # Возвращаем данные токена, если он валиден
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 app = FastAPI(
     title="To-Do API (FastAPI, in-memory)",
@@ -290,4 +318,24 @@ def login_user(data: LoginRequest):
     if saved_password is None or not bcrypt.checkpw(data.password.encode('utf-8'), saved_password.encode('utf-8')):
         raise HTTPException(status_code=400, detail="Неверный email или пароль")
 
-    return {"message": f"Добро пожаловать, {user.name}!"}
+    token = create_access_token({"sub": user.email, "role": user.role, "name": user.name})
+    return {
+        "message": f"Добро пожаловать, {user.name}!", 
+        "access_token": token
+    }
+
+@app.get("/protected")
+def protected_route(token: str = Depends(oauth2_scheme)):
+    # Проверяем токен
+    user_data = verify_access_token(token)
+    return {"message": f"Welcome, your role is {user_data['role']}"}
+
+@app.get("/me")
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    # Проверяем токен
+    user_data = verify_access_token(token)
+    return {
+        "email": user_data["sub"],
+        "name": user_data["name"],
+        "role": user_data["role"]
+    }
