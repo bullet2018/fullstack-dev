@@ -1,7 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from typing import List, Dict, Optional
-
-from pydantic import BaseModel, EmailStr
+import bcrypt
+from pydantic import BaseModel, EmailStr, field_validator
+from jose import jwt
+from datetime import datetime, timedelta
 
 app = FastAPI(
     title="To-Do API (FastAPI, in-memory)",
@@ -96,10 +98,38 @@ class UserUpdate(BaseModel):
 class User(UserBase):
     id: int
 
+class RegisterRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str
+
+    # Валидация полей
+    @field_validator("name")
+    def validate_name(cls, v):
+        if not v.strip():
+            raise ValueError("Имя не может быть пустым")
+        return v
+
+    @field_validator("password")
+    def validate_password(cls, v):
+        if not v or len(v) < 6:
+            raise ValueError("Пароль должен быть длиной минимум 6 символов")
+        return v
+
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
 
 # Простое in-memory хранилище
 users: List[User] = []
 _next_user_id_user = 1
+
+# Хранилище паролей: email -> password
+user_passwords: Dict[str, str] = {}
 
 
 def _get_next_user_id() -> int:
@@ -207,3 +237,57 @@ def delete_user(user_id: int):
     users.pop(idx)
     # 204 — без тела ответа
     return
+
+@app.post(
+    "/auth/register",
+    response_model=User,
+    status_code=201,
+    summary="Регистрация пользователя",
+    description="Регистрирует нового пользователя с валидацией данных."
+)
+def register_user(data: RegisterRequest) -> User:
+    # Проверка уникальности email
+    for u in users:
+        if u.email == data.email:
+            raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
+
+    # Создаём пользователя
+    new_user = User(
+        id=_get_next_user_id(),
+        name=data.name.strip(),
+        email=data.email,
+        role=data.role,
+    )
+    users.append(new_user)
+    hashed_password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    # Сохраняем пароль
+    user_passwords[data.email] = hashed_password
+
+    return new_user
+
+@app.post(
+    "/auth/login",
+    summary="Логин пользователя",
+    description="Проверяет email и пароль и возвращает приветственное сообщение."
+)
+def login_user(data: LoginRequest):
+    if not data.email or not data.password:
+        raise HTTPException(status_code=400, detail="Email и пароль обязательны")
+
+    # Проверяем, есть ли такой пользователь
+    user = None
+    for u in users:
+        if u.email == data.email:
+            user = u
+            break
+
+    if user is None:
+        raise HTTPException(status_code=404, detail="Пользователь с таким email не найден")
+
+    # Проверяем пароль
+    saved_password = user_passwords.get(data.email)
+
+    if saved_password is None or not bcrypt.checkpw(data.password.encode('utf-8'), saved_password.encode('utf-8')):
+        raise HTTPException(status_code=400, detail="Неверный email или пароль")
+
+    return {"message": f"Добро пожаловать, {user.name}!"}
