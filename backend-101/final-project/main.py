@@ -1,7 +1,37 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from typing import List, Dict, Optional
+import bcrypt
+from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel, EmailStr, field_validator
+from jose import jwt, JWTError
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+import os
 
-from pydantic import BaseModel, EmailStr
+load_dotenv()
+
+# Конфигурация для JWT
+secret_key = os.getenv("SECRET_KEY")
+algorithm = os.getenv("ALGORITHM")
+access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
+
+def create_access_token(data: dict):
+    # Добавляем дату истечения токена
+    to_encode = data.copy()
+    expire = datetime.now() + timedelta(minutes=access_token_expire_minutes)
+    to_encode.update({"exp": expire})  # Поле "exp" указывает, когда токен истечет
+
+    # Генерируем токен
+    return jwt.encode(to_encode, secret_key, algorithm=algorithm)
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+def verify_access_token(token: str):
+    try:
+        payload = jwt.decode(token, secret_key, algorithms=[algorithm])
+        return payload  # Возвращаем данные токена, если он валиден
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 app = FastAPI(
     title="To-Do API (FastAPI, in-memory)",
@@ -96,10 +126,38 @@ class UserUpdate(BaseModel):
 class User(UserBase):
     id: int
 
+class RegisterRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str
+
+    # Валидация полей
+    @field_validator("name")
+    def validate_name(cls, v):
+        if not v.strip():
+            raise ValueError("Имя не может быть пустым")
+        return v
+
+    @field_validator("password")
+    def validate_password(cls, v):
+        if not v or len(v) < 6:
+            raise ValueError("Пароль должен быть длиной минимум 6 символов")
+        return v
+
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
 
 # Простое in-memory хранилище
 users: List[User] = []
 _next_user_id_user = 1
+
+# Хранилище паролей: email -> password
+user_passwords: Dict[str, str] = {}
 
 
 def _get_next_user_id() -> int:
@@ -207,3 +265,77 @@ def delete_user(user_id: int):
     users.pop(idx)
     # 204 — без тела ответа
     return
+
+@app.post(
+    "/auth/register",
+    response_model=User,
+    status_code=201,
+    summary="Регистрация пользователя",
+    description="Регистрирует нового пользователя с валидацией данных."
+)
+def register_user(data: RegisterRequest) -> User:
+    # Проверка уникальности email
+    for u in users:
+        if u.email == data.email:
+            raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
+
+    # Создаём пользователя
+    new_user = User(
+        id=_get_next_user_id(),
+        name=data.name.strip(),
+        email=data.email,
+        role=data.role,
+    )
+    users.append(new_user)
+    hashed_password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    # Сохраняем пароль
+    user_passwords[data.email] = hashed_password
+
+    return new_user
+
+@app.post(
+    "/auth/login",
+    summary="Логин пользователя",
+    description="Проверяет email и пароль и возвращает приветственное сообщение."
+)
+def login_user(data: LoginRequest):
+    if not data.email or not data.password:
+        raise HTTPException(status_code=400, detail="Email и пароль обязательны")
+
+    # Проверяем, есть ли такой пользователь
+    user = None
+    for u in users:
+        if u.email == data.email:
+            user = u
+            break
+
+    if user is None:
+        raise HTTPException(status_code=404, detail="Пользователь с таким email не найден")
+
+    # Проверяем пароль
+    saved_password = user_passwords.get(data.email)
+
+    if saved_password is None or not bcrypt.checkpw(data.password.encode('utf-8'), saved_password.encode('utf-8')):
+        raise HTTPException(status_code=400, detail="Неверный email или пароль")
+
+    token = create_access_token({"sub": user.email, "role": user.role, "name": user.name})
+    return {
+        "message": f"Добро пожаловать, {user.name}!", 
+        "access_token": token
+    }
+
+@app.get("/protected")
+def protected_route(token: str = Depends(oauth2_scheme)):
+    # Проверяем токен
+    user_data = verify_access_token(token)
+    return {"message": f"Welcome, your role is {user_data['role']}"}
+
+@app.get("/me")
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    # Проверяем токен
+    user_data = verify_access_token(token)
+    return {
+        "email": user_data["sub"],
+        "name": user_data["name"],
+        "role": user_data["role"]
+    }
