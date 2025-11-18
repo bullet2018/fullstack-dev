@@ -8,6 +8,7 @@ from jose.exceptions import ExpiredSignatureError
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import os
+from uuid import uuid4
 
 load_dotenv()
 
@@ -16,6 +17,7 @@ secret_key = os.getenv("SECRET_KEY")
 algorithm = os.getenv("ALGORITHM")
 access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
 refresh_token_expire_days = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS"))
+active_refresh_tokens = {}
 
 def create_access_token(data: dict):
     # Добавляем дату истечения токена
@@ -36,11 +38,22 @@ def verify_access_token(token: str):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
+# def create_refresh_token(data: dict):
+#     to_encode = data.copy()
+#     expire = datetime.now(timezone.utc) + timedelta(days=refresh_token_expire_days)
+#     to_encode.update({"exp": expire})
+#     return jwt.encode(to_encode, secret_key, algorithm=algorithm)
+
 def create_refresh_token(data: dict):
-    to_encode = data.copy()
+    token_id = str(uuid4())  # Генерируем уникальный идентификатор
+    email = data["sub"]
     expire = datetime.now(timezone.utc) + timedelta(days=refresh_token_expire_days)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, secret_key, algorithm=algorithm)
+    to_encode = {"sub": email, "id": token_id, "exp": expire}
+    refresh_token = jwt.encode(to_encode, secret_key, algorithm=algorithm)
+
+    # Сохраняем токен как активный
+    active_refresh_tokens[token_id] = {"email": email, "expires_at": expire}
+    return refresh_token
 
 app = FastAPI(
     title="To-Do API (FastAPI, in-memory)",
@@ -329,6 +342,10 @@ def login_user(data: LoginRequest):
     if saved_password is None or not bcrypt.checkpw(data.password.encode('utf-8'), saved_password.encode('utf-8')):
         raise HTTPException(status_code=400, detail="Неверный email или пароль")
 
+    tokens_to_revoke = [key for key, value in active_refresh_tokens.items() if value["email"] == data.email]
+    for token_id in tokens_to_revoke:
+        del active_refresh_tokens[token_id]
+        
     token = create_access_token({"sub": user.email, "role": user.role, "name": user.name})
     refresh_token = create_refresh_token({"sub": user.email})
     return {
@@ -368,7 +385,12 @@ def refresh_access_token(body: RefreshRequest):
     try:
         # Проверяем валидность Refresh Token
         payload = jwt.decode(refresh_token, secret_key, algorithms=[algorithm])
+        token_id = payload.get("id")
         email = payload.get("sub")
+        
+        if token_id not in active_refresh_tokens:
+            raise HTTPException(status_code=401, detail="Refresh token is not active")
+        
         if not email:
             raise HTTPException(status_code=401, detail="Invalid token")
         
@@ -377,6 +399,7 @@ def refresh_access_token(body: RefreshRequest):
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
+        del active_refresh_tokens[token_id]
         # Генерируем новый Access Token
         new_access_token = create_access_token({
             "sub": user.email,
