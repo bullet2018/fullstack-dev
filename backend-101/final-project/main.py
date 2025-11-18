@@ -339,3 +339,23 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         "name": user_data["name"],
         "role": user_data["role"]
     }
+    
+def check_user_role(token_data: dict, required_role: str):
+    user_role = token_data.get("role")
+    if user_role != required_role:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied: requires {required_role} role"
+        )
+
+@app.get("/admin")
+def admin_route(token: str = Depends(oauth2_scheme)):
+    user_data = verify_access_token(token)
+    check_user_role(user_data, "admin")
+    return {"message": "Welcome, Admin! You have full access."}
+
+@app.get("/user-resource")
+def user_resource(token: str = Depends(oauth2_scheme)):
+    user_data = verify_access_token(token)
+    check_user_role(user_data, "user")
+    return {"message": f"Welcome, {user_data['name']}! This resource is for users only."}
