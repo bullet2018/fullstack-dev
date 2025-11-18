@@ -4,7 +4,8 @@ import bcrypt
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr, field_validator
 from jose import jwt, JWTError
-from datetime import datetime, timedelta
+from jose.exceptions import ExpiredSignatureError
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import os
 
@@ -14,11 +15,12 @@ load_dotenv()
 secret_key = os.getenv("SECRET_KEY")
 algorithm = os.getenv("ALGORITHM")
 access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
+refresh_token_expire_days = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS"))
 
 def create_access_token(data: dict):
     # Добавляем дату истечения токена
     to_encode = data.copy()
-    expire = datetime.now() + timedelta(minutes=access_token_expire_minutes)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=access_token_expire_minutes)
     to_encode.update({"exp": expire})  # Поле "exp" указывает, когда токен истечет
 
     # Генерируем токен
@@ -32,6 +34,13 @@ def verify_access_token(token: str):
         return payload  # Возвращаем данные токена, если он валиден
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def create_refresh_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(days=refresh_token_expire_days)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, secret_key, algorithm=algorithm)
 
 app = FastAPI(
     title="To-Do API (FastAPI, in-memory)",
@@ -151,6 +160,8 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 # Простое in-memory хранилище
 users: List[User] = []
@@ -319,9 +330,12 @@ def login_user(data: LoginRequest):
         raise HTTPException(status_code=400, detail="Неверный email или пароль")
 
     token = create_access_token({"sub": user.email, "role": user.role, "name": user.name})
+    refresh_token = create_refresh_token({"sub": user.email})
     return {
         "message": f"Добро пожаловать, {user.name}!", 
-        "access_token": token
+        "access_token": token,
+        "refresh_token": refresh_token,
+        
     }
 
 @app.get("/protected")
@@ -348,6 +362,34 @@ def check_user_role(token_data: dict, required_role: str):
             detail=f"Access denied: requires {required_role} role"
         )
 
+@app.post("/auth/refresh")
+def refresh_access_token(body: RefreshRequest):
+    refresh_token = body.refresh_token
+    try:
+        # Проверяем валидность Refresh Token
+        payload = jwt.decode(refresh_token, secret_key, algorithms=[algorithm])
+        email = payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Находим пользователя по email
+        user = next((u for u in users if u.email == email), None)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Генерируем новый Access Token
+        new_access_token = create_access_token({
+            "sub": user.email,
+            "role": user.role,
+            "name": user.name,
+        })
+        return {"access_token": new_access_token}
+
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Refresh token expired")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
 @app.get("/admin")
 def admin_route(token: str = Depends(oauth2_scheme)):
     user_data = verify_access_token(token)
@@ -359,3 +401,24 @@ def user_resource(token: str = Depends(oauth2_scheme)):
     user_data = verify_access_token(token)
     check_user_role(user_data, "user")
     return {"message": f"Welcome, {user_data['name']}! This resource is for users only."}
+
+from datetime import datetime
+
+@app.get("/debug-token")
+def debug_token(token: str):
+    payload = jwt.decode(
+        token,
+        secret_key,
+        algorithms=[algorithm],
+        options={"verify_exp": False},
+    )
+
+    exp_ts = payload.get("exp")
+
+    return {
+        "payload": payload,
+        "exp_raw": exp_ts,
+        "exp_as_utc": datetime.fromtimestamp(exp_ts, tz=timezone.utc).isoformat() if exp_ts else None,
+        "server_now_utc": datetime.now(timezone.utc).isoformat(),
+        "server_now_local": datetime.now().isoformat(),
+    }
