@@ -19,6 +19,9 @@ access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
 refresh_token_expire_days = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS"))
 active_refresh_tokens = {}
 
+def generate_id():
+    return str(uuid4())
+
 def create_access_token(data: dict):
     # Добавляем дату истечения токена
     to_encode = data.copy()
@@ -61,66 +64,83 @@ app = FastAPI(
     version="1.0.0",
 )
 
-tasks: List[Dict] = []
-_next_id = 1
+tasks: list[dict] = []
 
-def _get_next_id() -> int:
-    global _next_id
-    val = _next_id
-    _next_id += 1
-    return val
 
-@app.get("/tasks/", summary="Получить список задач", description="Возвращает все задачи из памяти.")
-def list_tasks() -> List[Dict]:
-    return tasks
+class TaskBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    completed: bool = False
+class TaskCreate(TaskBase):
+    pass
+class Task(TaskBase):
+    id: str
+    owner: str
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    completed: Optional[bool] = None
 
-@app.get("/tasks/{task_id}", summary="Получить задачу по id", description="Возвращает одну задачу по её идентификатору.")
-def get_task(task_id: int) -> Dict:
-    for t in tasks:
-        if t["id"] == task_id:
-            return t
-    raise HTTPException(status_code=404, detail="Task not found")
+@app.get("/tasks/", summary="Получить список задач", description="Возвращает все задачи юзера", response_model=List[Task])
+def list_tasks(user: dict = Depends(verify_access_token)):
+    return [t for t in tasks if t["owner"] == user["sub"]]
 
-@app.post("/tasks/", summary="Создать новую задачу", description="Создаёт задачу. Ожидает словарь: {'title': str, 'completed': bool?}.", status_code=201)
-def create_task(body: Dict) -> Dict:
-    title = body.get("title", "").strip()
-    completed = bool(body.get("completed", False))
-    description = body.get("description")  # может отсутствовать
+@app.get("/tasks/{task_id}", summary="Получить задачу по id", description="Возвращает одну задачу по её идентификатору.", response_model=Task)
+def get_task(task_id: str, user: dict = Depends(verify_access_token)):
+    task = next(
+        (t for t in tasks if t["id"] == task_id and t["owner"] == user["sub"]),
+        None
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
 
+@app.post("/tasks/", summary="Создать новую задачу", description="Создаёт задачу.", status_code=201)
+def create_task(data: TaskCreate, user: dict = Depends(verify_access_token)):
+    title = data.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Field 'title' is required")
 
     task = {
-        "id": _get_next_id(),
+        "id": generate_id(),
         "title": title,
-        "completed": completed,
+        "completed": data.completed,
+        "description": data.description,
+        "owner": user["sub"],
     }
-    if description is not None:
-        task["description"] = description
 
     tasks.append(task)
     return task
 
-@app.put("/tasks/{task_id}", summary="Обновить задачу", description="Полностью обновляет поля задачи (простая логика, без моделей).")
-def update_task(task_id: int, body: Dict) -> Dict:
-    for t in tasks:
-        if t["id"] == task_id:
-            if "title" in body:
-                t["title"] = str(body["title"])
-            if "completed" in body:
-                t["completed"] = bool(body["completed"])
-            if "description" in body:
-                t["description"] = body["description"]
-            return t
-    raise HTTPException(status_code=404, detail="Task not found")
+@app.put("/tasks/{task_id}", summary="Обновить задачу", description="Полностью обновляет поля задачи.", response_model=Task)
+def update_task(task_id: str, data: TaskUpdate, user: dict = Depends(verify_access_token)):
+    task = next(
+        (t for t in tasks if t["id"] == task_id and t["owner"] == user["sub"]),
+        None
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if data.title is not None:
+        task["title"] = data.title
+    if data.description is not None:
+        task["description"] = data.description
+    if data.completed is not None:
+        task["completed"] = data.completed
+
+    return task
+
 
 @app.delete("/tasks/{task_id}", summary="Удалить задачу", description="Удаляет задачу по идентификатору.", status_code=204)
-def delete_task(task_id: int):
-    for i, t in enumerate(tasks):
-        if t["id"] == task_id:
-            tasks.pop(i)
-            return
-    raise HTTPException(status_code=404, detail="Task not found")
+def delete_task(task_id: str, user: dict = Depends(verify_access_token)):
+    global tasks
+    before = len(tasks)
+    tasks = [
+        t for t in tasks 
+        if not (t["id"] == task_id and t["owner"] == user["sub"])
+    ]
+    if len(tasks) == before:
+        raise HTTPException(status_code=404, detail="Task not found")
 
 @app.get("/health", summary="Проверка работоспособности", description="Возвращает статус сервиса.")
 def health_check():
@@ -175,7 +195,7 @@ class LoginRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
-
+    
 # Простое in-memory хранилище
 users: List[User] = []
 _next_user_id_user = 1
@@ -424,8 +444,6 @@ def user_resource(token: str = Depends(oauth2_scheme)):
     user_data = verify_access_token(token)
     check_user_role(user_data, "user")
     return {"message": f"Welcome, {user_data['name']}! This resource is for users only."}
-
-from datetime import datetime
 
 @app.get("/debug-token")
 def debug_token(token: str):
